@@ -41,6 +41,7 @@
 #include <sys/ioctl.h>
 #include <sys/prctl.h>
 #include <unistd.h>
+#include <termios.h>
 
 #include <algorithm>
 #include <cctype>
@@ -520,6 +521,7 @@ static const char* HELP_STRING =
     "\t                      Start in inverted color mode.\n"
     "\t--color_mode=sepia, -c sepia\n"
     "\t                      Start in sepia color mode.\n"
+    "\t--interval=N, -i N    Set auto interval time in seconds \n"
 #if defined(JFBVIEW_ENABLE_LEGACY_IMAGE_IMPL) && \
     defined(JFBVIEW_ENABLE_LEGACY_PDF_IMPL) && !defined(JFBVIEW_NO_IMLIB2)
     "\t--format=image, -f image\n"
@@ -561,12 +563,13 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
       {"zoom_to_fit", false, nullptr, ZOOM_TO_FIT},
       {"rotation", true, nullptr, 'r'},
       {"color_mode", true, nullptr, 'c'},
+      {"interval", true, nullptr, 'i'},
       {"format", true, nullptr, 'f'},
       {"cache_size", true, nullptr, RENDER_CACHE_SIZE},
       {"fb_debug_info", false, nullptr, PRINT_FB_DEBUG_INFO_AND_EXIT},
       {0, 0, 0, 0},
   };
-  static const char* ShortFlags = "hP:p:z:r:c:f:";
+  static const char* ShortFlags = "hP:p:z:r:c:i:f:";
 
   for (;;) {
     int opt_char = getopt_long(argc, argv, ShortFlags, LongFlags, nullptr);
@@ -642,6 +645,13 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
         }
         break;
       }
+      case 'i':
+        if (sscanf(optarg, "%d", &(state->Interval)) < 0) {
+          fprintf(stderr, "Invalid interval \"%s\"\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        state->Zoom = Viewer::ZOOM_TO_FIT;
+        break;
       case PRINT_FB_DEBUG_INFO_AND_EXIT:
         state->PrintFBDebugInfoAndExit = true;
         break;
@@ -785,6 +795,46 @@ Troubleshooting tips:
 extern int JpdfgrepMain(int argc, char* argv[]);
 extern int JpdfcatMain(int argc, char* argv[]);
 
+int kbhit(void)
+{
+    struct termios oldt, newt;
+    int ch;
+    int oldf;
+
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+
+    ch = getchar();
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    fcntl(STDIN_FILENO, F_SETFL, oldf);
+
+    if (ch != EOF) {
+        ungetc(ch, stdin);
+        return 1;
+    }
+
+    return 0;
+}
+
+int wait_timer(float sec)
+{
+  int msec = int(sec * 1000);
+  int times = msec/100;
+  for (int i = 0; i < msec/100; ++i){
+    if (kbhit()) {
+        int c = getchar();
+        if (c == 'q') return c;
+    }
+    usleep(1000*100); // 100[ms]
+  }
+  return 0;
+}
+
 int main(int argc, char* argv[]) {
   // Dispatch to jpdfgrep and jpdfcat.
   const std::string argv0 = argv[0];
@@ -800,6 +850,7 @@ int main(int argc, char* argv[]) {
 
   // 1. Initialization.
   ParseCommandLine(argc, argv, &state);
+
   state.FramebufferInst.reset(Framebuffer::Open(state.FramebufferDevice));
   if (state.FramebufferInst == nullptr) {
     fprintf(stderr, "%s", FRAMEBUFFER_ERROR_HELP_STR);
@@ -855,6 +906,21 @@ int main(int argc, char* argv[]) {
   // 2. Main event loop.
   state.Render = true;
   int repeat = Command::NO_REPEAT;
+#if 0
+  do {
+    // 2.1 Render.
+    if (state.Render) {
+      state.ViewerInst->SetState(state);
+      state.ViewerInst->Render();
+      state.ViewerInst->GetState(&state);
+    }
+    state.Render = true;
+    int c = state.Page+1 == state.NumPages ? 'g' : 'J';
+    registry->Dispatch(c, repeat, &state);
+    repeat = Command::NO_REPEAT;
+    usleep(state.Interval*1000*1000);
+  } while(!state.Exit);
+#else  
   do {
     // 2.1 Render.
     if (state.Render) {
@@ -864,23 +930,33 @@ int main(int argc, char* argv[]) {
     }
     state.Render = true;
 
-    // 2.2. Grab input.
-    int c;
-    while (isdigit(c = getch())) {
-      if (repeat == Command::NO_REPEAT) {
-        repeat = c - '0';
-      } else {
-        repeat = repeat * 10 + c - '0';
+    if (state.Interval == 0) {
+      // 2.2. Grab input.
+      int c;
+      while (isdigit(c = getch())) {
+        if (repeat == Command::NO_REPEAT) {
+          repeat = c - '0';
+        } else {
+          repeat = repeat * 10 + c - '0';
+        }
+      }
+      if (c == KEY_RESIZE) {
+        continue;
+      }
+
+      // 2.3. Run command.
+      registry->Dispatch(c, repeat, &state);
+    }
+    else {
+      int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
+      registry->Dispatch(c, repeat, &state);
+      if (wait_timer(state.Interval) == 'q') {
+        state.Exit = true;
       }
     }
-    if (c == KEY_RESIZE) {
-      continue;
-    }
-
-    // 2.3. Run command.
-    registry->Dispatch(c, repeat, &state);
     repeat = Command::NO_REPEAT;
   } while (!state.Exit);
+#endif
 
   // 3. Clean up.
   state.OutlineViewInst.reset();

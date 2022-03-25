@@ -86,7 +86,8 @@ class Viewer {
     // Height of framebuffer. This is written by Render(), and is ignored by
     // Render() itself.
     int ScreenHeight;
-
+    // Auto pager intarval in seconds
+    int Interval;
     // Current color mode.
     enum ColorMode ColorMode;
 
@@ -98,7 +99,8 @@ class Viewer {
           Rotation(rotation),
           XOffset(x_offset),
           YOffset(y_offset),
-          ColorMode(NORMAL) {}
+          ColorMode(NORMAL),
+          Interval(0) {}
   };
 
   // Constructs a new Viewer object. Does not take ownership of the document or
