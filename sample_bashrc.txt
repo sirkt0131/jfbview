@@ -1,0 +1,8 @@
+# For digital signage (PDF view)
+if [ $(tty) == '/dev/tty1' ]; then
+    echo 'Waiting for 10 sec...'
+    sleep 10
+    echo 'Execute PDF View'
+    clear
+    python3 /home/pi/program/jfbview/show_pdf.py --config=config.ini --basedir=/mnt/test;
+fi
