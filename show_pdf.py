@@ -9,6 +9,7 @@ import datetime
 import configparser
 
 TEMP_FOLDER = '/tmp'
+BASE_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 def get_pdf_size(file):
     cmd = "pdfinfo  %s | grep 'Page size:' | awk -F' ' '{print $3, $5, $7}'"%(file)
@@ -137,12 +138,12 @@ if __name__ == '__main__':
     
     if args.basedir is None or not os.path.exists(args.basedir):
         print(args.basedir if args.basedir is not None else "'None'" + ' is not found')
-        run_jfbview('default.pdf', 15)
+        run_jfbview(BASE_FOLDER+'/default.pdf', 15)
         exit(0)
     
     if not os.path.exists(args.basedir+'/'+args.config):
         print(args.basedir+'/'+args.config + ' is not exist')
-        run_jfbview('default.pdf', 15)
+        run_jfbview(BASE_FOLDER+'/default.pdf', 15)
         exit(0)
 
     # read config.ini
@@ -185,7 +186,7 @@ if __name__ == '__main__':
             a4multi.append(f[1])
 
     if len(a4single) % 2 != 0:
-        shutil.copyfile('a4filler.pdf', TEMP_FOLDER+'/a4filler.pdf')
+        shutil.copyfile(BASE_FOLDER+'/a4filler.pdf', TEMP_FOLDER+'/a4filler.pdf')
         a4single.append(TEMP_FOLDER+'/a4filler.pdf')
     
     a4files.extend(a4single)
@@ -216,6 +217,6 @@ if __name__ == '__main__':
         clear_screen()
         run_jfbview(TEMP_FOLDER+'/final.pdf', interval)
     else:
-        run_jfbview('default.pdf', interval)
+        run_jfbview(BASE_FOLDER+'/default.pdf', interval)
             
     
