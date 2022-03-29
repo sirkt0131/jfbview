@@ -129,6 +129,7 @@ def read_configini(file):
     return interval
 
 if __name__ == '__main__':
+    devnull = open('./lastlog.txt', 'w')
     parser = argparse.ArgumentParser()
     parser.add_argument("--basedir", type=str, help="PDF base directory")
     parser.add_argument("--config", type=str, default='config.ini', help="Config file (default = basedir/config.ini")
@@ -136,10 +137,12 @@ if __name__ == '__main__':
     
     if args.basedir is None or not os.path.exists(args.basedir):
         print(args.basedir if args.basedir is not None else "'None'" + ' is not found')
+        run_jfbview('default.pdf', 15)
         exit(0)
     
     if not os.path.exists(args.basedir+'/'+args.config):
         print(args.basedir+'/'+args.config + ' is not exist')
+        run_jfbview('default.pdf', 15)
         exit(0)
 
     # read config.ini
@@ -147,8 +150,6 @@ if __name__ == '__main__':
 
     if os.path.exists(TEMP_FOLDER+'/final.pdf'):
         os.remove(TEMP_FOLDER+'/final.pdf')
-    
-    devnull = open('./lastlog.txt', 'w')
     
     files = check_files(glob.glob(args.basedir +'/**', recursive=False))
 
@@ -171,12 +172,27 @@ if __name__ == '__main__':
                 pdf_resize_a3(file, output)
                 a3files.append(output)
     
-    if len(tmpa4)>0:
-        tmpa4 = sorted(tmpa4, key=lambda x: x[0])
-        for f in tmpa4:
-            a4files.append(f[1])
+    a4single = [] # A4縦1枚
+    a4double = [] # A4縦2枚
+    a4multi  = [] # A4縦3枚以上
 
-    # A4を連結
+    for f in tmpa4:
+        if f[0] == 1:
+            a4single.append(f[1])
+        elif f[0] == 2:
+            a4double.append(f[1])
+        else:
+            a4multi.append(f[1])
+
+    if len(a4single) % 2 != 0:
+        shutil.copyfile('a4filler.pdf', TEMP_FOLDER+'/a4filler.pdf')
+        a4single.append(TEMP_FOLDER+'/a4filler.pdf')
+    
+    a4files.extend(a4single)
+    a4files.extend(a4double)
+    a4files.extend(a4multi)
+
+    # A4Singleを連結
     is_a4create = pdfunite(a4files, TEMP_FOLDER+'/a4tmp.pdf')
     # A3を連結
     is_a3create = pdfunite(a3files, TEMP_FOLDER+'/a3tmp.pdf')
@@ -199,5 +215,7 @@ if __name__ == '__main__':
         print('Show final.pdf interval in %d'%(interval))
         clear_screen()
         run_jfbview(TEMP_FOLDER+'/final.pdf', interval)
+    else:
+        run_jfbview('default.pdf', interval)
             
     
