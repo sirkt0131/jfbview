@@ -70,10 +70,18 @@ def rm_tmpfiles(files):
         ret.communicate()
     return 
 
-def run_jfbview(filename, interval):
-    cmd = "jfbview -i %d %s"%(interval, filename)
-    ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
-    return ret.communicate()
+def run_jfbview(filename, intervals):
+    if len(intervals) == 1:
+        cmd = "jfbview -i %d %s"%(intervals[0], filename)
+        ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
+        return ret.communicate()
+    elif len(intervals) > 1:
+        ints = ",".join(map(str, intervals))
+        cmd = "jfbview -j %s %s"%(ints, filename)
+        print(cmd)
+        ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
+        return ret.communicate()
+        
 
 def clear_screen():
     cmd = "clear"
@@ -102,23 +110,42 @@ def file_type_check(now, basename):
     except:
         return False
 
+def to_interval(basename):
+    # yyyymmdd-yyyymmdd_NN_*からNNを数値で取り出す( NN: interval [sec])
+    # 取り出せない場合は、0にする
+    try:
+        interval = int(basename[18:20])
+        return interval
+    except:
+        return 0
+
 # begin - end期間に含まれるか確認し、該当するものだけを集める
 def check_files(files):
-    ret = []
+    target_files = []
+    intervals = []
     now = datetime.datetime.now()
     
     for f in files:
         basename = os.path.basename(f)
         # yyyymmdd-yyyymmdd_*で、pdf/PDFで終わるもの
-        if re.search('\d{8}-\d{8}_*', basename) and re.search('.+(pdf|PDF)$',basename):
+        if re.search('\d{8}-\d{8}-\d{2}_*', basename) and re.search('.+(pdf|PDF)$',basename):
             print(basename,end='')
             if file_type_check(now, basename) == True:
-                ret.append(f)
-                print('  [Print]')
+                target_files.append(f)
+                intervals.append(to_interval(basename))
+                print('  [Print2]')
             else:
-                print('  [DontPrint]')
-    
-    return ret
+                print('  [DontPrint2]')
+        elif re.search('\d{8}-\d{8}_*', basename) and re.search('.+(pdf|PDF)$',basename):
+            print(basename,end='')
+            if file_type_check(now, basename) == True:
+                target_files.append(f)
+                intervals.append(0)
+                print('  [Print1]')
+            else:
+                print('  [DontPrint1]')
+            
+    return target_files, intervals
 
 def read_configini(file):
     try:
@@ -138,12 +165,12 @@ if __name__ == '__main__':
     
     if args.basedir is None or not os.path.exists(args.basedir):
         print(args.basedir if args.basedir is not None else "'None'" + ' is not found')
-        run_jfbview(BASE_FOLDER+'/default.pdf', 15)
+        run_jfbview(BASE_FOLDER+'/default.pdf', [15])
         exit(0)
     
     if not os.path.exists(args.basedir+'/'+args.config):
         print(args.basedir+'/'+args.config + ' is not exist')
-        run_jfbview(BASE_FOLDER+'/default.pdf', 15)
+        run_jfbview(BASE_FOLDER+'/default.pdf', [15])
         exit(0)
 
     # read config.ini
@@ -152,8 +179,10 @@ if __name__ == '__main__':
     if os.path.exists(TEMP_FOLDER+'/final.pdf'):
         os.remove(TEMP_FOLDER+'/final.pdf')
     
-    files = check_files(glob.glob(args.basedir +'/**', recursive=False))
-
+    files, intervals = check_files(glob.glob(args.basedir +'/**', recursive=False))
+    # intervalsのうち、0のものをconfig.iniの値で置き換える
+    intervals = [interval if i == 0 else i for i in intervals]
+    
     tmpa4  = []
     a4files = []
     a3files = []
@@ -213,10 +242,11 @@ if __name__ == '__main__':
     rm_tmpfiles([TEMP_FOLDER+'/a4tmp.pdf',TEMP_FOLDER+'/a3tmp.pdf',TEMP_FOLDER+'/a4all.pdf'])
     # jfbview
     if os.path.exists(TEMP_FOLDER+'/final.pdf'):
-        print('Show final.pdf interval in %d'%(interval))
+        print('Show final.pdf interval')
         clear_screen()
-        run_jfbview(TEMP_FOLDER+'/final.pdf', interval)
+        run_jfbview(TEMP_FOLDER+'/final.pdf', intervals)
     else:
-        run_jfbview(BASE_FOLDER+'/default.pdf', interval)
+        print('Show default PDF')
+        run_jfbview(BASE_FOLDER+'/default.pdf', [interval])
             
     
