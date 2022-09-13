@@ -61,6 +61,12 @@ class Framebuffer {
   // Return debugging information as a string.
   std::string GetDebugInfoString();
 
+  // 
+  void WritePixel(int x, int y, uint8_t r, uint8_t g, uint8_t b)
+  {
+    _pixel_buffer->WritePixel(x, y, r, g, b);
+  }
+
  private:
   // Color format of the framebuffer.
   class Format : public PixelBuffer::Format {

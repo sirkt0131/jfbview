@@ -524,6 +524,7 @@ static const char* HELP_STRING =
     "\t                      Start in sepia color mode.\n"
     "\t--interval=N, -i N    Set auto interval time in seconds \n"
     "\t--intervals=N, -j N,. Set auto intervals time in seconds \n"
+    "\t--show_progress       Show progress circle \n"
 #if defined(JFBVIEW_ENABLE_LEGACY_IMAGE_IMPL) && \
     defined(JFBVIEW_ENABLE_LEGACY_PDF_IMPL) && !defined(JFBVIEW_NO_IMLIB2)
     "\t--format=image, -f image\n"
@@ -592,12 +593,13 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
       {"color_mode", true, nullptr, 'c'},
       {"interval", true, nullptr, 'i'},
       {"intervals", true, nullptr, 'j'},
+      {"show_progress", false, nullptr, 's'},
       {"format", true, nullptr, 'f'},
       {"cache_size", true, nullptr, RENDER_CACHE_SIZE},
       {"fb_debug_info", false, nullptr, PRINT_FB_DEBUG_INFO_AND_EXIT},
       {0, 0, 0, 0},
   };
-  static const char* ShortFlags = "hP:p:z:r:c:i:j:f:";
+  static const char* ShortFlags = "hP:p:z:r:c:i:j:s:f:";
 
   for (;;) {
     int opt_char = getopt_long(argc, argv, ShortFlags, LongFlags, nullptr);
@@ -690,6 +692,9 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
           //for_each(intervals.begin(), intervals.end(), [](int v){printf("%d\n",v);});
           state->Zoom = Viewer::ZOOM_TO_FIT;
         }
+        break;
+      case 's':
+        state->ShowProgress = true;
         break;
       case PRINT_FB_DEBUG_INFO_AND_EXIT:
         state->PrintFBDebugInfoAndExit = true;
@@ -860,16 +865,64 @@ int kbhit(void)
     return 0;
 }
 
-int wait_timer(float sec)
+void line_to(Framebuffer* fb, int x0, int y0, int x1, int y1, uint8_t r, uint8_t g, uint8_t b)
 {
+  int i;
+
+  int dx = ( x1 > x0 ) ? x1 - x0 : x0 - x1;
+  int dy = ( y1 > y0 ) ? y1 - y0 : y0 - y1;
+
+  int sx = ( x1 > x0 ) ? 1 : -1;
+  int sy = ( y1 > y0 ) ? 1 : -1;
+
+  /* 傾きが1より小さい場合 */
+  if ( dx > dy ) {
+    int E = -dx;
+    for ( i = 0 ; i <= dx ; ++i ) {
+      fb->WritePixel(x0, y0, r, g, b);
+      x0 += sx;
+      E += 2 * dy;
+      if ( E >= 0 ) {
+        y0 += sy;
+        E -= 2 * dx;
+      }
+    }
+  /* 傾きが1以上の場合 */
+  } else {
+    int E = -dy;
+    for ( i = 0 ; i <= dy ; ++i ) {
+      fb->WritePixel(x0, y0, r, g, b);
+      y0 += sy;
+      E += 2 * dx;
+      if ( E >= 0 ) {
+        x0 += sx;
+        E -= 2 * dy;
+      }
+    }
+  }
+}
+
+int wait_timer(float sec, Framebuffer* fb)
+{
+  const double PI = 3.141592653589;
   int msec = int(sec * 1000);
-  int times = msec/100;
-  for (int i = 0; i < msec/100; ++i){
+  int times = msec/10;
+
+  int center_x = fb ? fb->GetSize().Width-(fb->GetSize().Width/48.0) : 0;
+  int center_y = fb ? fb->GetSize().Height/(48.0*9.0/16.0) : 0;
+  int length   = fb ? center_y*0.3 : 0;
+
+  for (int i = 0; i < times; ++i){
     if (kbhit()) {
         int c = getchar();
         if (c == 'q') return c;
     }
-    usleep(1000*100); // 100[ms]
+    if (fb) {
+      int x = center_x + length * cos(PI/2.0 + i*(2*PI)/times);
+      int y = center_y - length * sin(PI/2.0 + i*(2*PI)/times);
+      line_to(fb, center_x, center_y, x, y, 250, 0, 0);
+    }
+    usleep(1000*10); // 10[ms]
   }
   return 0;
 }
@@ -998,14 +1051,14 @@ int main(int argc, char* argv[]) {
       if (state.Interval != 0) {
         int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
         registry->Dispatch(c, repeat, &state);
-        if (wait_timer(state.Interval) == 'q') {
+        if (wait_timer(state.Interval, state.ShowProgress ? state.FramebufferInst.get(): nullptr) == 'q') {
           state.Exit = true;
         }
       }
       else if(state.Intervals.size() >= state.NumPages){
         int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
         registry->Dispatch(c, repeat, &state);
-        if (wait_timer(state.Intervals[state.Page]) == 'q') {
+        if (wait_timer(state.Intervals[state.Page], state.ShowProgress ? state.FramebufferInst.get(): nullptr) == 'q') {
           state.Exit = true;
         }
       }
