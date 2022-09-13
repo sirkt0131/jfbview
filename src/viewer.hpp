@@ -23,6 +23,7 @@
 #define VIEWER_HPP
 
 #include "cache.hpp"
+#include <vector>
 
 class Document;
 class Framebuffer;
@@ -88,6 +89,8 @@ class Viewer {
     int ScreenHeight;
     // Auto pager intarval in seconds
     int Interval;
+    // Auto pager intervals in seconds
+    std::vector<int> Intervals;
     // Current color mode.
     enum ColorMode ColorMode;
 

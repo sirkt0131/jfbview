@@ -53,6 +53,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "command.hpp"
 #include "cpp_compat.hpp"
@@ -522,6 +523,7 @@ static const char* HELP_STRING =
     "\t--color_mode=sepia, -c sepia\n"
     "\t                      Start in sepia color mode.\n"
     "\t--interval=N, -i N    Set auto interval time in seconds \n"
+    "\t--intervals=N, -j N,. Set auto intervals time in seconds \n"
 #if defined(JFBVIEW_ENABLE_LEGACY_IMAGE_IMPL) && \
     defined(JFBVIEW_ENABLE_LEGACY_PDF_IMPL) && !defined(JFBVIEW_NO_IMLIB2)
     "\t--format=image, -f image\n"
@@ -540,6 +542,31 @@ static const char* HELP_STRING =
     "jfbview home page: https://github.com/jichu4n/jfbview\n"
     "Bug reports & suggestions: https://github.com/jichu4n/jfbview/issues\n"
     "\n";
+
+// Split string into token
+std::vector<int> split_intervals(const std::string& string, const std::string& separator) {
+  auto separator_length = separator.length(); // 区切り文字の長さ
+
+  auto list = std::vector<int>();
+
+  if (separator_length == 0) {
+    list.emplace_back(0);
+  } else {
+    auto offset = std::string::size_type(0);
+    while (true) {
+      auto pos = string.find(separator, offset);
+      if (pos == std::string::npos) {
+        int val = std::stoi(string.substr(offset));
+        list.emplace_back(val);
+        break;
+      }
+      int val = std::stoi(string.substr(offset, pos - offset));
+      list.emplace_back(val);
+      offset = pos + separator_length;
+    }
+  }
+  return list;
+}
 
 // Parses the command line, and stores settings in state. Crashes the
 // program if the commnad line contains errors.
@@ -564,12 +591,13 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
       {"rotation", true, nullptr, 'r'},
       {"color_mode", true, nullptr, 'c'},
       {"interval", true, nullptr, 'i'},
+      {"intervals", true, nullptr, 'j'},
       {"format", true, nullptr, 'f'},
       {"cache_size", true, nullptr, RENDER_CACHE_SIZE},
       {"fb_debug_info", false, nullptr, PRINT_FB_DEBUG_INFO_AND_EXIT},
       {0, 0, 0, 0},
   };
-  static const char* ShortFlags = "hP:p:z:r:c:i:f:";
+  static const char* ShortFlags = "hP:p:z:r:c:i:j:f:";
 
   for (;;) {
     int opt_char = getopt_long(argc, argv, ShortFlags, LongFlags, nullptr);
@@ -651,6 +679,17 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
           exit(EXIT_FAILURE);
         }
         state->Zoom = Viewer::ZOOM_TO_FIT;
+        break;
+      case 'j':
+        {
+          std::vector<int> intervals = split_intervals(optarg, ",");
+          int last = intervals.back();
+          intervals.pop_back();
+          intervals.insert(intervals.begin(), last);
+          state->Intervals = intervals;
+          //for_each(intervals.begin(), intervals.end(), [](int v){printf("%d\n",v);});
+          state->Zoom = Viewer::ZOOM_TO_FIT;
+        }
         break;
       case PRINT_FB_DEBUG_INFO_AND_EXIT:
         state->PrintFBDebugInfoAndExit = true;
@@ -929,8 +968,16 @@ int main(int argc, char* argv[]) {
       state.ViewerInst->GetState(&state);
     }
     state.Render = true;
+    
+    // Check PDF numpages and intervals count
+    if (state.Intervals.size() != 0 and state.Intervals.size() < state.NumPages) {
+      printf("PDF page count and intervals are mismatch!  Pages %d, Intervals %d\n", state.NumPages, int(state.Intervals.size()));
+      state.Intervals.clear();
+      state.Interval = 15; // default 15sec
+    }
 
-    if (state.Interval == 0) {
+    // If not set auto pager interval
+    if (state.Interval == 0 and state.Intervals.size()==0) {
       // 2.2. Grab input.
       int c;
       while (isdigit(c = getch())) {
@@ -948,10 +995,19 @@ int main(int argc, char* argv[]) {
       registry->Dispatch(c, repeat, &state);
     }
     else {
-      int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
-      registry->Dispatch(c, repeat, &state);
-      if (wait_timer(state.Interval) == 'q') {
-        state.Exit = true;
+      if (state.Interval != 0) {
+        int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
+        registry->Dispatch(c, repeat, &state);
+        if (wait_timer(state.Interval) == 'q') {
+          state.Exit = true;
+        }
+      }
+      else if(state.Intervals.size() >= state.NumPages){
+        int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
+        registry->Dispatch(c, repeat, &state);
+        if (wait_timer(state.Intervals[state.Page]) == 'q') {
+          state.Exit = true;
+        }
       }
     }
     repeat = Command::NO_REPEAT;
