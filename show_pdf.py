@@ -186,6 +186,7 @@ if __name__ == '__main__':
     tmpa4  = []
     a4files = []
     a3files = []
+    
     # 縦長はA4に、横長はA3にリサイズ
     for i, file in enumerate(files):
         size = get_pdf_size(file).split()
@@ -197,35 +198,86 @@ if __name__ == '__main__':
             output = "%s/%02d.pdf"%(TEMP_FOLDER, i)
             if (w < h):
                 pdf_resize_a4(file, output)
-                tmpa4.append((num,output))
+                tmpa4.append((num,output, intervals[i]))
             else:
                 pdf_resize_a3(file, output)
-                a3files.append(output)
+                a3files.append((output, num, intervals[i]))
     
     a4single = [] # A4縦1枚
     a4double = [] # A4縦2枚
     a4multi  = [] # A4縦3枚以上
+    page_intervals = [] # a3連結(2in1)されたときの各ページのinterval
 
     for f in tmpa4:
         if f[0] == 1:
-            a4single.append(f[1])
+            a4single.append((f[1], f[0], f[2])) # filename, page_num, interval
         elif f[0] == 2:
-            a4double.append(f[1])
+            a4double.append((f[1], f[0], f[2])) # filename, page_num, interval
         else:
-            a4multi.append(f[1])
+            a4multi.append((f[1], f[0], f[2])) # filename, page_num, interval
 
     if len(a4single) % 2 != 0:
         shutil.copyfile(BASE_FOLDER+'/a4filler.pdf', TEMP_FOLDER+'/a4filler.pdf')
-        a4single.append(TEMP_FOLDER+'/a4filler.pdf')
+        a4single.append((TEMP_FOLDER+'/a4filler.pdf', 1, 0)) # filename, page_num, interval
     
     a4files.extend(a4single)
     a4files.extend(a4double)
     a4files.extend(a4multi)
+    a4filenames = []
+    a3filenames = []
+    for f in a4files:
+        a4filenames.append(f[0])
+    for f in a3files:
+        a3filenames.append(f[0])
 
+    # A4単一ページの2in1ページのintervalをカウント    
+    cnt = 0
+    timer = 0
+    for i, f in enumerate(a4single):
+        for n in range(f[1]): # page_num
+            cnt = cnt + 1 # page数
+            timer = timer + f[2]
+            if cnt % 2 == 0:
+                page_intervals.append(timer) # intervalをpage_num数分追加
+                timer = 0
+    # A4 2ページの2in1ページのintervalをカウント    
+    cnt = 0
+    timer = 0
+    for f in a4double:
+        for n in range(f[1]): # page_num
+            cnt = cnt + 1 # page数
+            timer = timer + f[2]
+            if cnt % 2 == 0:
+                page_intervals.append(timer) # intervalをpage_num数分追加
+                timer = 0
+    # A4 3ページ以上の2in1ページのintervalをカウント    
+    cnt = 0
+    timer = 0
+    for f in a4multi:
+        for n in range(f[1]): # page_num
+            cnt = cnt + 1 # page数
+            timer = timer + f[2]
+            if cnt % 2 == 0:
+                page_intervals.append(timer) # intervalをpage_num数分追加
+                timer = 0
+            elif cnt == f[1]: # 最終ページ
+                page_intervals.append(f[2]) # intervalをpage_num数分追加
+
+    # A3 ページのintervalをカウント    
+    cnt = 0
+    timer = 0
+    for f in a3files:
+        for n in range(f[1]): # page_num
+            cnt = cnt + 1 # page数
+            page_intervals.append(f[2]) # intervalをpage_num数分追加
+    #print(a4files)
+    #print(a3files)
+    #print(page_intervals)
+    
     # A4Singleを連結
-    is_a4create = pdfunite(a4files, TEMP_FOLDER+'/a4tmp.pdf')
+    is_a4create = pdfunite(a4filenames, TEMP_FOLDER+'/a4tmp.pdf')
     # A3を連結
-    is_a3create = pdfunite(a3files, TEMP_FOLDER+'/a3tmp.pdf')
+    is_a3create = pdfunite(a3filenames, TEMP_FOLDER+'/a3tmp.pdf')
     # A4を2in1に
     if is_a4create and is_a3create:
         a4nup_2in1(TEMP_FOLDER+'/a4tmp.pdf', TEMP_FOLDER+'/a4all.pdf')
@@ -237,14 +289,14 @@ if __name__ == '__main__':
 
 
     # 一時ファイルを削除
-    rm_tmpfiles(a4files) 
-    rm_tmpfiles(a3files)
+    rm_tmpfiles(a4filenames) 
+    rm_tmpfiles(a3filenames)
     rm_tmpfiles([TEMP_FOLDER+'/a4tmp.pdf',TEMP_FOLDER+'/a3tmp.pdf',TEMP_FOLDER+'/a4all.pdf'])
     # jfbview
     if os.path.exists(TEMP_FOLDER+'/final.pdf'):
         print('Show final.pdf interval')
         clear_screen()
-        run_jfbview(TEMP_FOLDER+'/final.pdf', intervals)
+        run_jfbview(TEMP_FOLDER+'/final.pdf', page_intervals)
     else:
         print('Show default PDF')
         run_jfbview(BASE_FOLDER+'/default.pdf', [interval])
