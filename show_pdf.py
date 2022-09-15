@@ -78,13 +78,17 @@ def run_jfbview(filename, intervals):
     elif len(intervals) > 1:
         ints = ",".join(map(str, intervals))
         cmd = "jfbview --show_progress -j %s %s"%(ints, filename)
-        print(cmd)
+        #print(cmd)
         ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
         return ret.communicate()
         
+def pkill_jfbview():
+    cmd = "pkill -f jfbview"
+    ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
+    return ret.communicate()
 
 def clear_screen():
-    cmd = "clear"
+    cmd = "clear && sleep 1"
     ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
     return ret.communicate()
 
@@ -292,11 +296,18 @@ if __name__ == '__main__':
     rm_tmpfiles(a4filenames) 
     rm_tmpfiles(a3filenames)
     rm_tmpfiles([TEMP_FOLDER+'/a4tmp.pdf',TEMP_FOLDER+'/a3tmp.pdf',TEMP_FOLDER+'/a4all.pdf'])
+
+    # jfbviewのプロセスが生きていたら、KILLする
+    pkill_jfbview()
+    
+    # copy final
+    shutil.copy2(TEMP_FOLDER+'/final.pdf', TEMP_FOLDER+'/view.pdf')
+
     # jfbview
-    if os.path.exists(TEMP_FOLDER+'/final.pdf'):
+    if os.path.exists(TEMP_FOLDER+'/view.pdf'):
         print('Show final.pdf interval')
         clear_screen()
-        run_jfbview(TEMP_FOLDER+'/final.pdf', page_intervals)
+        run_jfbview(TEMP_FOLDER+'/view.pdf', page_intervals)
     else:
         print('Show default PDF')
         run_jfbview(BASE_FOLDER+'/default.pdf', [interval])
