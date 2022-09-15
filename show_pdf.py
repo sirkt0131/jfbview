@@ -24,7 +24,7 @@ def get_pdf_pages(file):
     return int(stdout.decode('utf-8').split()[0])
 
 def pdfjam(input, output, type):
-    if os.path.exists(file):
+    if os.path.exists(input):
         cmd = "pdfjam  %s %s -o %s"%(type, input, output)
         ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
         return ret.communicate()
@@ -83,7 +83,7 @@ def run_jfbview(filename, intervals):
         return ret.communicate()
         
 def pkill_jfbview():
-    cmd = "pkill -f jfbview"
+    cmd = "pkill jfbview"
     ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
     return ret.communicate()
 
@@ -160,29 +160,7 @@ def read_configini(file):
         interval = 15 # [sec]
     return interval
 
-if __name__ == '__main__':
-    devnull = open('./lastlog.txt', 'w')
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--basedir", type=str, help="PDF base directory")
-    parser.add_argument("--config", type=str, default='config.ini', help="Config file (default = basedir/config.ini")
-    args = parser.parse_args()
-    
-    if args.basedir is None or not os.path.exists(args.basedir):
-        print(args.basedir if args.basedir is not None else "'None'" + ' is not found')
-        run_jfbview(BASE_FOLDER+'/default.pdf', [15])
-        exit(0)
-    
-    if not os.path.exists(args.basedir+'/'+args.config):
-        print(args.basedir+'/'+args.config + ' is not exist')
-        run_jfbview(BASE_FOLDER+'/default.pdf', [15])
-        exit(0)
-
-    # read config.ini
-    interval = read_configini(args.basedir+'/'+args.config)
-
-    if os.path.exists(TEMP_FOLDER+'/final.pdf'):
-        os.remove(TEMP_FOLDER+'/final.pdf')
-    
+def create_pdf(output_pdf):
     files, intervals = check_files(glob.glob(args.basedir +'/**', recursive=False))
     # intervalsのうち、0のものをconfig.iniの値で置き換える
     intervals = [interval if i == 0 else i for i in intervals]
@@ -277,7 +255,7 @@ if __name__ == '__main__':
     #print(a4files)
     #print(a3files)
     #print(page_intervals)
-    
+
     # A4Singleを連結
     is_a4create = pdfunite(a4filenames, TEMP_FOLDER+'/a4tmp.pdf')
     # A3を連結
@@ -285,11 +263,11 @@ if __name__ == '__main__':
     # A4を2in1に
     if is_a4create and is_a3create:
         a4nup_2in1(TEMP_FOLDER+'/a4tmp.pdf', TEMP_FOLDER+'/a4all.pdf')
-        pdfunite([TEMP_FOLDER+'/a4all.pdf', TEMP_FOLDER+'/a3tmp.pdf'], TEMP_FOLDER+'/final.pdf')
+        pdfunite([TEMP_FOLDER+'/a4all.pdf', TEMP_FOLDER+'/a3tmp.pdf'], output_pdf)
     elif is_a4create == True  and is_a3create == False:
-        a4nup_2in1(TEMP_FOLDER+'/a4tmp.pdf', TEMP_FOLDER+'/final.pdf')
+        a4nup_2in1(TEMP_FOLDER+'/a4tmp.pdf', output_pdf)
     elif is_a4create == False and is_a3create == True:
-        shutil.move(TEMP_FOLDER+'/a3tmp.pdf', TEMP_FOLDER+'/final.pdf')
+        shutil.move(TEMP_FOLDER+'/a3tmp.pdf', output_pdf)
 
 
     # 一時ファイルを削除
@@ -297,19 +275,49 @@ if __name__ == '__main__':
     rm_tmpfiles(a3filenames)
     rm_tmpfiles([TEMP_FOLDER+'/a4tmp.pdf',TEMP_FOLDER+'/a3tmp.pdf',TEMP_FOLDER+'/a4all.pdf'])
 
+    return page_intervals
+
+if __name__ == '__main__':
+    devnull = open('/dev/null', 'w')
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--basedir", type=str, help="PDF base directory")
+    parser.add_argument("--config", type=str, default='config.ini', help="Config file (default = basedir/config.ini")
+    args = parser.parse_args()
+    output_pdf = TEMP_FOLDER + '/final.pdf'
+    
+    if args.basedir is None or not os.path.exists(args.basedir):
+        print(args.basedir if args.basedir is not None else "'None'" + ' is not found')
+        run_jfbview(BASE_FOLDER+'/default.pdf', [15])
+        exit(0)
+    
+    if not os.path.exists(args.basedir+'/'+args.config):
+        print(args.basedir+'/'+args.config + ' is not exist')
+        run_jfbview(BASE_FOLDER+'/default.pdf', [15])
+        exit(0)
+
+    # read config.ini
+    interval = read_configini(args.basedir+'/'+args.config)
+
+    if os.path.exists(output_pdf):
+        os.remove(output_pdf)
+    
+    # PDF作成
+    page_intervals = create_pdf(output_pdf)
+
     # jfbviewのプロセスが生きていたら、KILLする
-    pkill_jfbview()
+    #pkill_jfbview()
     
     # copy final
-    shutil.copy2(TEMP_FOLDER+'/final.pdf', TEMP_FOLDER+'/view.pdf')
-
+    view_pdf = TEMP_FOLDER+'/view.pdf'
+    shutil.copy2(output_pdf, view_pdf)
+    
     # jfbview
-    if os.path.exists(TEMP_FOLDER+'/view.pdf'):
-        print('Show final.pdf interval')
+    if os.path.exists(view_pdf):
+        print('Show view.pdf interval')
         clear_screen()
-        run_jfbview(TEMP_FOLDER+'/view.pdf', page_intervals)
+        run_jfbview(view_pdf, page_intervals)
     else:
         print('Show default PDF')
         run_jfbview(BASE_FOLDER+'/default.pdf', [interval])
-            
-    
+
+    devnull.close()
