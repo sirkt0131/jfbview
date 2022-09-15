@@ -10,6 +10,7 @@ import configparser
 
 TEMP_FOLDER = '/tmp'
 BASE_FOLDER = os.path.dirname(os.path.abspath(__file__))
+PID_FILE = '/tmp/jfbview.pid'
 
 def get_pdf_size(file):
     cmd = "pdfinfo  %s | grep 'Page size:' | awk -F' ' '{print $3, $5, $7}'"%(file)
@@ -72,20 +73,32 @@ def rm_tmpfiles(files):
 
 def run_jfbview(filename, intervals):
     if len(intervals) == 1:
-        cmd = "jfbview --show_progress -i %d %s"%(intervals[0], filename)
-        ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
+        #cmd = "/usr/local/bin/jfbview --show_progress -i %d %s"%(intervals[0], filename)
+        cmd = ['/usr/local/bin/jfbview', '--show_progress', '-i', "%d"%(intervals[0]), "%s"%(filename)]
+        ret = subprocess.Popen(cmd, shell=False, stdout=devnull, stderr=devnull) # subprocess.PIPE
+        f = open(PID_FILE,'w')
+        f.write(ret.pid)
+        f.close()
         return ret.communicate()
     elif len(intervals) > 1:
         ints = ",".join(map(str, intervals))
-        cmd = "jfbview --show_progress -j %s %s"%(ints, filename)
-        #print(cmd)
-        ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
+        #cmd = "/usr/local/bin/jfbview --show_progress -j %s %s"%(ints, filename)
+        cmd = ['/usr/local/bin/jfbview', '--show_progress', '-j', "%s"%(ints), "%s"%(filename)]
+        ret = subprocess.Popen(cmd, shell=False, stdout=devnull, stderr=devnull) # subprocess.PIPE
+        f = open(PID_FILE,'w')
+        f.write("%s"%(ret.pid))
+        f.close()
         return ret.communicate()
         
 def pkill_jfbview():
-    cmd = "pkill jfbview"
-    ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
-    return ret.communicate()
+    if os.path.exists(PID_FILE):
+        f = open(PID_FILE,'r')
+        pid = f.read()
+        f.close()
+        cmd = "kill -INT %s"%(pid)
+        print(cmd)
+        ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
+        return ret.communicate()
 
 def clear_screen():
     cmd = "clear && sleep 1"
@@ -252,9 +265,6 @@ def create_pdf(output_pdf):
         for n in range(f[1]): # page_num
             cnt = cnt + 1 # page数
             page_intervals.append(f[2]) # intervalをpage_num数分追加
-    #print(a4files)
-    #print(a3files)
-    #print(page_intervals)
 
     # A4Singleを連結
     is_a4create = pdfunite(a4filenames, TEMP_FOLDER+'/a4tmp.pdf')
@@ -305,7 +315,7 @@ if __name__ == '__main__':
     page_intervals = create_pdf(output_pdf)
 
     # jfbviewのプロセスが生きていたら、KILLする
-    #pkill_jfbview()
+    pkill_jfbview()
     
     # copy final
     view_pdf = TEMP_FOLDER+'/view.pdf'
@@ -321,3 +331,4 @@ if __name__ == '__main__':
         run_jfbview(BASE_FOLDER+'/default.pdf', [interval])
 
     devnull.close()
+    os.remove(PID_FILE)

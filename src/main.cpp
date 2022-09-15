@@ -965,6 +965,7 @@ int main(int argc, char* argv[]) {
       state.Interval = prev_state.Interval;
       state.Intervals = prev_state.Intervals;
       state.Zoom = prev_state.Zoom;
+      state.ShowProgress = prev_state.ShowProgress;
     }
 
     state.FramebufferInst.reset(Framebuffer::Open(state.FramebufferDevice));
@@ -1112,6 +1113,7 @@ int main(int argc, char* argv[]) {
     prev_state.Intervals = state.Intervals;
     prev_state.Exit = state.Exit;
     prev_state.Zoom = state.Zoom;
+    prev_state.ShowProgress = state.ShowProgress;
     // printf("Backup %d %d %d\n", prev_state.Interval, (int)prev_state.Intervals.size(), e_flag);
     if (e_flag == 0) break;
   };
