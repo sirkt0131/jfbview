@@ -7,10 +7,10 @@ import glob
 import subprocess
 import datetime
 import configparser
+import psutil
 
 TEMP_FOLDER = '/tmp'
 BASE_FOLDER = os.path.dirname(os.path.abspath(__file__))
-PID_FILE = '/tmp/jfbview.pid'
 
 def get_pdf_size(file):
     cmd = "pdfinfo  %s | grep 'Page size:' | awk -F' ' '{print $3, $5, $7}'"%(file)
@@ -76,29 +76,38 @@ def run_jfbview(filename, intervals):
         #cmd = "/usr/local/bin/jfbview --show_progress -i %d %s"%(intervals[0], filename)
         cmd = ['/usr/local/bin/jfbview', '--show_progress', '-i', "%d"%(intervals[0]), "%s"%(filename)]
         ret = subprocess.Popen(cmd, shell=False, stdout=devnull, stderr=devnull) # subprocess.PIPE
-        f = open(PID_FILE,'w')
-        f.write(ret.pid)
-        f.close()
         return ret.communicate()
     elif len(intervals) > 1:
         ints = ",".join(map(str, intervals))
         #cmd = "/usr/local/bin/jfbview --show_progress -j %s %s"%(ints, filename)
         cmd = ['/usr/local/bin/jfbview', '--show_progress', '-j', "%s"%(ints), "%s"%(filename)]
         ret = subprocess.Popen(cmd, shell=False, stdout=devnull, stderr=devnull) # subprocess.PIPE
-        f = open(PID_FILE,'w')
-        f.write("%s"%(ret.pid))
-        f.close()
         return ret.communicate()
-        
-def pkill_jfbview():
-    if os.path.exists(PID_FILE):
-        f = open(PID_FILE,'r')
-        pid = f.read()
-        f.close()
+
+def findProcessIdByName(processName):
+    '''
+    Get a list of all the PIDs of a all the running process whose name contains
+    the given string processName
+    '''
+    listOfProcessObjects = []
+    #Iterate over the all the running process
+    for proc in psutil.process_iter():
+       try:
+           pinfo = proc.as_dict(attrs=['pid', 'name', 'create_time'])
+           # Check if process name contains the given name string.
+           if processName.lower() in pinfo['name'].lower() :
+               listOfProcessObjects.append(pinfo)
+       except (psutil.NoSuchProcess, psutil.AccessDenied , psutil.ZombieProcess) :
+           pass
+    return listOfProcessObjects;
+
+def kill_jfbview(pids):
+    for pid in pids:    
         cmd = "kill -INT %s"%(pid)
         print(cmd)
         ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
-        return ret.communicate()
+        ret.communicate()
+    return
 
 def clear_screen():
     cmd = "clear && sleep 1"
@@ -315,7 +324,8 @@ if __name__ == '__main__':
     page_intervals = create_pdf(output_pdf)
 
     # jfbviewのプロセスが生きていたら、KILLする
-    pkill_jfbview()
+    #ret = findProcessIdByName('jfbview')
+    #kill_jfbview(ret)
     
     # copy final
     view_pdf = TEMP_FOLDER+'/view.pdf'
@@ -331,4 +341,3 @@ if __name__ == '__main__':
         run_jfbview(BASE_FOLDER+'/default.pdf', [interval])
 
     devnull.close()
-    os.remove(PID_FILE)
