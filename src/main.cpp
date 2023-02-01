@@ -42,6 +42,7 @@
 #include <sys/prctl.h>
 #include <unistd.h>
 #include <termios.h>
+#include <signal.h>
 
 #include <algorithm>
 #include <cctype>
@@ -53,6 +54,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "command.hpp"
 #include "cpp_compat.hpp"
@@ -63,6 +65,12 @@
 #include "pdf_document.hpp"
 #include "search_view.hpp"
 #include "viewer.hpp"
+
+volatile sig_atomic_t e_flag = 0;
+void reload_handler(int sig) {
+  printf("Signal Handled\n");
+  e_flag = 1;
+}
 
 // Main program state.
 struct State : public Viewer::State {
@@ -522,6 +530,8 @@ static const char* HELP_STRING =
     "\t--color_mode=sepia, -c sepia\n"
     "\t                      Start in sepia color mode.\n"
     "\t--interval=N, -i N    Set auto interval time in seconds \n"
+    "\t--intervals=N, -j N,. Set auto intervals time in seconds \n"
+    "\t--show_progress       Show progress circle \n"
 #if defined(JFBVIEW_ENABLE_LEGACY_IMAGE_IMPL) && \
     defined(JFBVIEW_ENABLE_LEGACY_PDF_IMPL) && !defined(JFBVIEW_NO_IMLIB2)
     "\t--format=image, -f image\n"
@@ -540,6 +550,31 @@ static const char* HELP_STRING =
     "jfbview home page: https://github.com/jichu4n/jfbview\n"
     "Bug reports & suggestions: https://github.com/jichu4n/jfbview/issues\n"
     "\n";
+
+// Split string into token
+std::vector<int> split_intervals(const std::string& string, const std::string& separator) {
+  auto separator_length = separator.length(); // 区切り文字の長さ
+
+  auto list = std::vector<int>();
+
+  if (separator_length == 0) {
+    list.emplace_back(0);
+  } else {
+    auto offset = std::string::size_type(0);
+    while (true) {
+      auto pos = string.find(separator, offset);
+      if (pos == std::string::npos) {
+        int val = std::stoi(string.substr(offset));
+        list.emplace_back(val);
+        break;
+      }
+      int val = std::stoi(string.substr(offset, pos - offset));
+      list.emplace_back(val);
+      offset = pos + separator_length;
+    }
+  }
+  return list;
+}
 
 // Parses the command line, and stores settings in state. Crashes the
 // program if the commnad line contains errors.
@@ -564,12 +599,14 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
       {"rotation", true, nullptr, 'r'},
       {"color_mode", true, nullptr, 'c'},
       {"interval", true, nullptr, 'i'},
+      {"intervals", true, nullptr, 'j'},
+      {"show_progress", false, nullptr, 's'},
       {"format", true, nullptr, 'f'},
       {"cache_size", true, nullptr, RENDER_CACHE_SIZE},
       {"fb_debug_info", false, nullptr, PRINT_FB_DEBUG_INFO_AND_EXIT},
       {0, 0, 0, 0},
   };
-  static const char* ShortFlags = "hP:p:z:r:c:i:f:";
+  static const char* ShortFlags = "hP:p:z:r:c:i:j:s:f:";
 
   for (;;) {
     int opt_char = getopt_long(argc, argv, ShortFlags, LongFlags, nullptr);
@@ -651,6 +688,20 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
           exit(EXIT_FAILURE);
         }
         state->Zoom = Viewer::ZOOM_TO_FIT;
+        break;
+      case 'j':
+        {
+          std::vector<int> intervals = split_intervals(optarg, ",");
+          int last = intervals.back();
+          intervals.pop_back();
+          intervals.insert(intervals.begin(), last);
+          state->Intervals = intervals;
+          //for_each(intervals.begin(), intervals.end(), [](int v){printf("%d\n",v);});
+          state->Zoom = Viewer::ZOOM_TO_FIT;
+        }
+        break;
+      case 's':
+        state->ShowProgress = true;
         break;
       case PRINT_FB_DEBUG_INFO_AND_EXIT:
         state->PrintFBDebugInfoAndExit = true;
@@ -821,21 +872,75 @@ int kbhit(void)
     return 0;
 }
 
-int wait_timer(float sec)
+void line_to(Framebuffer* fb, int x0, int y0, int x1, int y1, uint8_t r, uint8_t g, uint8_t b)
 {
+  int i;
+
+  int dx = ( x1 > x0 ) ? x1 - x0 : x0 - x1;
+  int dy = ( y1 > y0 ) ? y1 - y0 : y0 - y1;
+
+  int sx = ( x1 > x0 ) ? 1 : -1;
+  int sy = ( y1 > y0 ) ? 1 : -1;
+
+  /* 傾きが1より小さい場合 */
+  if ( dx > dy ) {
+    int E = -dx;
+    for ( i = 0 ; i <= dx ; ++i ) {
+      fb->WritePixel(x0, y0, r, g, b);
+      x0 += sx;
+      E += 2 * dy;
+      if ( E >= 0 ) {
+        y0 += sy;
+        E -= 2 * dx;
+      }
+    }
+  /* 傾きが1以上の場合 */
+  } else {
+    int E = -dy;
+    for ( i = 0 ; i <= dy ; ++i ) {
+      fb->WritePixel(x0, y0, r, g, b);
+      y0 += sy;
+      E += 2 * dx;
+      if ( E >= 0 ) {
+        x0 += sx;
+        E -= 2 * dy;
+      }
+    }
+  }
+}
+
+int wait_timer(float sec, Framebuffer* fb)
+{
+  const double PI = 3.141592653589;
   int msec = int(sec * 1000);
-  int times = msec/100;
-  for (int i = 0; i < msec/100; ++i){
+  int times = msec/10;
+
+  int center_x = fb ? fb->GetSize().Width-(fb->GetSize().Width/48.0) : 0;
+  int center_y = fb ? fb->GetSize().Height/(48.0*9.0/16.0) : 0;
+  int length   = fb ? center_y*0.3 : 0;
+
+  for (int i = 0; i < times; ++i){
     if (kbhit()) {
         int c = getchar();
-        if (c == 'q') return c;
+        if (c == 'q' || c == 'r') return c;
     }
-    usleep(1000*100); // 100[ms]
+    if (e_flag == 1) {
+      return 'r';
+    }
+    if (fb) {
+      int x = center_x + length * cos(PI/2.0 + i*(2*PI)/times);
+      int y = center_y - length * sin(PI/2.0 + i*(2*PI)/times);
+      line_to(fb, center_x, center_y, x, y, 250, 0, 0);
+    }
+    usleep(1000*10); // 10[ms]
   }
   return 0;
 }
 
 int main(int argc, char* argv[]) {
+  if ( signal(SIGINT, reload_handler) == SIG_ERR ) {
+    exit(1);
+  }  
   // Dispatch to jpdfgrep and jpdfcat.
   const std::string argv0 = argv[0];
   const std::string basename = argv0.substr(argv0.find_last_of('/') + 1);
@@ -844,130 +949,174 @@ int main(int argc, char* argv[]) {
   } else if (basename == "jpdfcat") {
     return JpdfcatMain(argc, argv);
   }
+  
+  State prev_state;
 
-  // Main program state.
-  State state;
+  for(;;) {
+    e_flag = 0;
+    // Main program state.
+    State state;
+    // 1. Initialization.
+    ParseCommandLine(argc, argv, &state);
+    
+    // restore
+    if (prev_state.Exit) {
+      state.Exit = false;
+      state.Interval = prev_state.Interval;
+      state.Intervals = prev_state.Intervals;
+      state.Zoom = prev_state.Zoom;
+      state.ShowProgress = prev_state.ShowProgress;
+    }
 
-  // 1. Initialization.
-  ParseCommandLine(argc, argv, &state);
-
-  state.FramebufferInst.reset(Framebuffer::Open(state.FramebufferDevice));
-  if (state.FramebufferInst == nullptr) {
-    fprintf(stderr, "%s", FRAMEBUFFER_ERROR_HELP_STR);
-    exit(EXIT_FAILURE);
-  }
-
-  if (state.PrintFBDebugInfoAndExit) {
-    PrintFBDebugInfo(state.FramebufferInst.get());
-    exit(EXIT_SUCCESS);
-  }
-
-  if (!LoadFile(&state)) {
-    exit(EXIT_FAILURE);
-  }
-
-  setlocale(LC_ALL, "");
-  initscr();
-  start_color();
-  keypad(stdscr, true);
-  nonl();
-  cbreak();
-  noecho();
-  curs_set(false);
-  // This is necessary to prevent curses erasing the framebuffer on first call
-  // to getch().
-  refresh();
-
-  state.ViewerInst = std::make_unique<Viewer>(
-      state.DocumentInst.get(), state.FramebufferInst.get(), state,
-      state.RenderCacheSize);
-  std::unique_ptr<Registry> registry(BuildRegistry());
-
-  state.OutlineViewInst =
-      std::make_unique<OutlineView>(state.DocumentInst->GetOutline());
-  state.SearchViewInst = std::make_unique<SearchView>(state.DocumentInst.get());
-
-  pid_t parent = getpid();
-  if (!fork()) {
-    if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
+    state.FramebufferInst.reset(Framebuffer::Open(state.FramebufferDevice));
+    if (state.FramebufferInst == nullptr) {
+      fprintf(stderr, "%s", FRAMEBUFFER_ERROR_HELP_STR);
       exit(EXIT_FAILURE);
     }
-    // Possible race condition. Cannot be fixed by doing before
-    // fork, because this is cleared at fork. Instead, we now
-    // check that we have not been reparented. This should
-    // nullify the race condition.
-    if (getppid() != parent) {
+
+    if (state.PrintFBDebugInfoAndExit) {
+      PrintFBDebugInfo(state.FramebufferInst.get());
       exit(EXIT_SUCCESS);
     }
-    DetectVTChange(parent);
-    exit(EXIT_FAILURE);
-  }
 
-  // 2. Main event loop.
-  state.Render = true;
-  int repeat = Command::NO_REPEAT;
-#if 0
-  do {
-    // 2.1 Render.
-    if (state.Render) {
-      state.ViewerInst->SetState(state);
-      state.ViewerInst->Render();
-      state.ViewerInst->GetState(&state);
+    if (!LoadFile(&state)) {
+      exit(EXIT_FAILURE);
     }
-    state.Render = true;
-    int c = state.Page+1 == state.NumPages ? 'g' : 'J';
-    registry->Dispatch(c, repeat, &state);
-    repeat = Command::NO_REPEAT;
-    usleep(state.Interval*1000*1000);
-  } while(!state.Exit);
-#else  
-  do {
-    // 2.1 Render.
-    if (state.Render) {
-      state.ViewerInst->SetState(state);
-      state.ViewerInst->Render();
-      state.ViewerInst->GetState(&state);
-    }
-    state.Render = true;
 
-    if (state.Interval == 0) {
-      // 2.2. Grab input.
-      int c;
-      while (isdigit(c = getch())) {
-        if (repeat == Command::NO_REPEAT) {
-          repeat = c - '0';
-        } else {
-          repeat = repeat * 10 + c - '0';
+    setlocale(LC_ALL, "");
+    initscr();
+    start_color();
+    keypad(stdscr, true);
+    nonl();
+    cbreak();
+    noecho();
+    curs_set(false);
+    // This is necessary to prevent curses erasing the framebuffer on first call
+    // to getch().
+    refresh();
+
+    state.ViewerInst = std::make_unique<Viewer>(
+        state.DocumentInst.get(), state.FramebufferInst.get(), state,
+        state.RenderCacheSize);
+    std::unique_ptr<Registry> registry(BuildRegistry());
+
+    state.OutlineViewInst =
+        std::make_unique<OutlineView>(state.DocumentInst->GetOutline());
+    state.SearchViewInst = std::make_unique<SearchView>(state.DocumentInst.get());
+
+    pid_t parent = getpid();
+    if (!fork()) {
+      if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
+        exit(EXIT_FAILURE);
+      }
+      // Possible race condition. Cannot be fixed by doing before
+      // fork, because this is cleared at fork. Instead, we now
+      // check that we have not been reparented. This should
+      // nullify the race condition.
+      if (getppid() != parent) {
+        exit(EXIT_SUCCESS);
+      }
+      DetectVTChange(parent);
+      exit(EXIT_FAILURE);
+    }
+
+    // 2. Main event loop.
+    state.Render = true;
+    int repeat = Command::NO_REPEAT;
+  #if 0
+    do {
+      // 2.1 Render.
+      if (state.Render) {
+        state.ViewerInst->SetState(state);
+        state.ViewerInst->Render();
+        state.ViewerInst->GetState(&state);
+      }
+      state.Render = true;
+      int c = state.Page+1 == state.NumPages ? 'g' : 'J';
+      registry->Dispatch(c, repeat, &state);
+      repeat = Command::NO_REPEAT;
+      usleep(state.Interval*1000*1000);
+    } while(!state.Exit);
+  #else  
+    do {
+      // 2.1 Render.
+      if (state.Render) {
+        state.ViewerInst->SetState(state);
+        state.ViewerInst->Render();
+        state.ViewerInst->GetState(&state);
+      }
+      state.Render = true;
+      
+      // Check PDF numpages and intervals count
+      if (state.Intervals.size() != 0 and state.Intervals.size() < state.NumPages) {
+        printf("PDF page count and intervals are mismatch!  Pages %d, Intervals %d\n", state.NumPages, int(state.Intervals.size()));
+        state.Intervals.clear();
+        state.Interval = 15; // default 15sec
+      }
+
+      // If not set auto pager interval
+      if (state.Interval == 0 and state.Intervals.size()==0) {
+        // 2.2. Grab input.
+        int c;
+        while (isdigit(c = getch())) {
+          if (repeat == Command::NO_REPEAT) {
+            repeat = c - '0';
+          } else {
+            repeat = repeat * 10 + c - '0';
+          }
+        }
+        if (c == KEY_RESIZE) {
+          continue;
+        }
+
+        // 2.3. Run command.
+        registry->Dispatch(c, repeat, &state);
+      }
+      else {
+        if (state.Interval != 0) {
+          int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
+          registry->Dispatch(c, repeat, &state);
+          int wait_result = wait_timer(state.Interval, state.ShowProgress ? state.FramebufferInst.get(): nullptr);
+          if (wait_result == 'q' || wait_result == 'r') {
+            state.Exit = true;
+            if (wait_result == 'q') {e_flag = 0;}
+            else                    {e_flag = 1;}
+          }
+        }
+        else if(state.Intervals.size() >= state.NumPages){
+          int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
+          registry->Dispatch(c, repeat, &state);
+          int wait_result = wait_timer(state.Intervals[state.Page], state.ShowProgress ? state.FramebufferInst.get(): nullptr);
+          if (wait_result == 'q' || wait_result == 'r') {
+            state.Exit = true;
+            if (wait_result == 'q') {e_flag = 0;}
+            else                    {e_flag = 1;}
+          }
         }
       }
-      if (c == KEY_RESIZE) {
-        continue;
-      }
+      repeat = Command::NO_REPEAT;
+    } while (!state.Exit);
+  #endif
 
-      // 2.3. Run command.
-      registry->Dispatch(c, repeat, &state);
-    }
-    else {
-      int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
-      registry->Dispatch(c, repeat, &state);
-      if (wait_timer(state.Interval) == 'q') {
-        state.Exit = true;
-      }
-    }
-    repeat = Command::NO_REPEAT;
-  } while (!state.Exit);
-#endif
+    // 3. Clean up.
+    state.OutlineViewInst.reset();
+    // Hack alert: Calling endwin() immediately after the framebuffer destructor
+    // (which clears the screen) appears to cause a race condition where the next
+    // shell prompt after this program exits would also get erased. Adding a
+    // short sleep appears to fix the issue.
+    state.FramebufferInst.reset();
+    usleep(100 * 1000);
+    endwin();
 
-  // 3. Clean up.
-  state.OutlineViewInst.reset();
-  // Hack alert: Calling endwin() immediately after the framebuffer destructor
-  // (which clears the screen) appears to cause a race condition where the next
-  // shell prompt after this program exits would also get erased. Adding a
-  // short sleep appears to fix the issue.
-  state.FramebufferInst.reset();
-  usleep(100 * 1000);
-  endwin();
-
+    // backup interval
+    prev_state.Interval = state.Interval;
+    prev_state.Intervals = state.Intervals;
+    prev_state.Exit = state.Exit;
+    prev_state.Zoom = state.Zoom;
+    prev_state.ShowProgress = state.ShowProgress;
+    // printf("Backup %d %d %d\n", prev_state.Interval, (int)prev_state.Intervals.size(), e_flag);
+    if (e_flag == 0) break;
+  };
   return EXIT_SUCCESS;
 }
 

@@ -23,6 +23,7 @@
 #define VIEWER_HPP
 
 #include "cache.hpp"
+#include <vector>
 
 class Document;
 class Framebuffer;
@@ -88,6 +89,10 @@ class Viewer {
     int ScreenHeight;
     // Auto pager intarval in seconds
     int Interval;
+    // Auto pager intervals in seconds
+    std::vector<int> Intervals;
+    // ShowProgress
+    bool ShowProgress;
     // Current color mode.
     enum ColorMode ColorMode;
 
@@ -100,7 +105,8 @@ class Viewer {
           XOffset(x_offset),
           YOffset(y_offset),
           ColorMode(NORMAL),
-          Interval(0) {}
+          Interval(0),
+          ShowProgress(false) {}
   };
 
   // Constructs a new Viewer object. Does not take ownership of the document or

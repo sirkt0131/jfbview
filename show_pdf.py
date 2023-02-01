@@ -7,8 +7,10 @@ import glob
 import subprocess
 import datetime
 import configparser
+import psutil
 
 TEMP_FOLDER = '/tmp'
+BASE_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 def get_pdf_size(file):
     cmd = "pdfinfo  %s | grep 'Page size:' | awk -F' ' '{print $3, $5, $7}'"%(file)
@@ -23,7 +25,7 @@ def get_pdf_pages(file):
     return int(stdout.decode('utf-8').split()[0])
 
 def pdfjam(input, output, type):
-    if os.path.exists(file):
+    if os.path.exists(input):
         cmd = "pdfjam  %s %s -o %s"%(type, input, output)
         ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
         return ret.communicate()
@@ -69,13 +71,46 @@ def rm_tmpfiles(files):
         ret.communicate()
     return 
 
-def run_jfbview(filename, interval):
-    cmd = "jfbview -i %d %s"%(interval, filename)
-    ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
-    return ret.communicate()
+def run_jfbview(filename, intervals):
+    if len(intervals) == 1:
+        #cmd = "/usr/local/bin/jfbview --show_progress -i %d %s"%(intervals[0], filename)
+        cmd = ['/usr/local/bin/jfbview', '--show_progress', '-i', "%d"%(intervals[0]), "%s"%(filename)]
+        ret = subprocess.Popen(cmd, shell=False, stdout=devnull, stderr=devnull) # subprocess.PIPE
+        return ret.communicate()
+    elif len(intervals) > 1:
+        ints = ",".join(map(str, intervals))
+        #cmd = "/usr/local/bin/jfbview --show_progress -j %s %s"%(ints, filename)
+        cmd = ['/usr/local/bin/jfbview', '--show_progress', '-j', "%s"%(ints), "%s"%(filename)]
+        ret = subprocess.Popen(cmd, shell=False, stdout=devnull, stderr=devnull) # subprocess.PIPE
+        return ret.communicate()
+
+def findProcessIdByName(processName):
+    '''
+    Get a list of all the PIDs of a all the running process whose name contains
+    the given string processName
+    '''
+    listOfProcessObjects = []
+    #Iterate over the all the running process
+    for proc in psutil.process_iter():
+       try:
+           pinfo = proc.as_dict(attrs=['pid', 'name', 'create_time'])
+           # Check if process name contains the given name string.
+           if processName.lower() in pinfo['name'].lower() :
+               listOfProcessObjects.append(pinfo)
+       except (psutil.NoSuchProcess, psutil.AccessDenied , psutil.ZombieProcess) :
+           pass
+    return listOfProcessObjects;
+
+def kill_jfbview(pids):
+    for pid in pids:    
+        cmd = "kill -INT %s"%(pid)
+        print(cmd)
+        ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
+        ret.communicate()
+    return
 
 def clear_screen():
-    cmd = "clear"
+    cmd = "clear && sleep 1"
     ret = subprocess.Popen(cmd, shell=True, stdout=devnull, stderr=devnull) # subprocess.PIPE
     return ret.communicate()
 
@@ -101,23 +136,42 @@ def file_type_check(now, basename):
     except:
         return False
 
+def to_interval(basename):
+    # yyyymmdd-yyyymmdd_NN_*からNNを数値で取り出す( NN: interval [sec])
+    # 取り出せない場合は、0にする
+    try:
+        interval = int(basename[18:20])
+        return interval
+    except:
+        return 0
+
 # begin - end期間に含まれるか確認し、該当するものだけを集める
 def check_files(files):
-    ret = []
+    target_files = []
+    intervals = []
     now = datetime.datetime.now()
     
     for f in files:
         basename = os.path.basename(f)
         # yyyymmdd-yyyymmdd_*で、pdf/PDFで終わるもの
-        if re.search('\d{8}-\d{8}_*', basename) and re.search('.+(pdf|PDF)$',basename):
+        if re.search('\d{8}-\d{8}-\d{2}_*', basename) and re.search('.+(pdf|PDF)$',basename):
             print(basename,end='')
             if file_type_check(now, basename) == True:
-                ret.append(f)
-                print('  [Print]')
+                target_files.append(f)
+                intervals.append(to_interval(basename))
+                print('  [Print2]')
             else:
-                print('  [DontPrint]')
-    
-    return ret
+                print('  [DontPrint2]')
+        elif re.search('\d{8}-\d{8}_*', basename) and re.search('.+(pdf|PDF)$',basename):
+            print(basename,end='')
+            if file_type_check(now, basename) == True:
+                target_files.append(f)
+                intervals.append(0)
+                print('  [Print1]')
+            else:
+                print('  [DontPrint1]')
+            
+    return target_files, intervals
 
 def read_configini(file):
     try:
@@ -128,33 +182,15 @@ def read_configini(file):
         interval = 15 # [sec]
     return interval
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--basedir", type=str, help="PDF base directory")
-    parser.add_argument("--config", type=str, default='config.ini', help="Config file (default = basedir/config.ini")
-    args = parser.parse_args()
+def create_pdf(output_pdf):
+    files, intervals = check_files(glob.glob(args.basedir +'/**', recursive=False))
+    # intervalsのうち、0のものをconfig.iniの値で置き換える
+    intervals = [interval if i == 0 else i for i in intervals]
     
-    if args.basedir is None or not os.path.exists(args.basedir):
-        print(args.basedir if args.basedir is not None else "'None'" + ' is not found')
-        exit(0)
-    
-    if not os.path.exists(args.basedir+'/'+args.config):
-        print(args.basedir+'/'+args.config + ' is not exist')
-        exit(0)
-
-    # read config.ini
-    interval = read_configini(args.basedir+'/'+args.config)
-
-    if os.path.exists(TEMP_FOLDER+'/final.pdf'):
-        os.remove(TEMP_FOLDER+'/final.pdf')
-    
-    devnull = open('./lastlog.txt', 'w')
-    
-    files = check_files(glob.glob(args.basedir +'/**', recursive=False))
-
     tmpa4  = []
     a4files = []
     a3files = []
+    
     # 縦長はA4に、横長はA3にリサイズ
     for i, file in enumerate(files):
         size = get_pdf_size(file).split()
@@ -166,38 +202,142 @@ if __name__ == '__main__':
             output = "%s/%02d.pdf"%(TEMP_FOLDER, i)
             if (w < h):
                 pdf_resize_a4(file, output)
-                tmpa4.append((num,output))
+                tmpa4.append((num,output, intervals[i]))
             else:
                 pdf_resize_a3(file, output)
-                a3files.append(output)
+                a3files.append((output, num, intervals[i]))
     
-    if len(tmpa4)>0:
-        tmpa4 = sorted(tmpa4, key=lambda x: x[0])
-        for f in tmpa4:
-            a4files.append(f[1])
+    a4single = [] # A4縦1枚
+    a4double = [] # A4縦2枚
+    a4multi  = [] # A4縦3枚以上
+    page_intervals = [] # a3連結(2in1)されたときの各ページのinterval
 
-    # A4を連結
-    is_a4create = pdfunite(a4files, TEMP_FOLDER+'/a4tmp.pdf')
+    for f in tmpa4:
+        if f[0] == 1:
+            a4single.append((f[1], f[0], f[2])) # filename, page_num, interval
+        elif f[0] == 2:
+            a4double.append((f[1], f[0], f[2])) # filename, page_num, interval
+        else:
+            a4multi.append((f[1], f[0], f[2])) # filename, page_num, interval
+
+    if len(a4single) % 2 != 0:
+        shutil.copyfile(BASE_FOLDER+'/a4filler.pdf', TEMP_FOLDER+'/a4filler.pdf')
+        a4single.append((TEMP_FOLDER+'/a4filler.pdf', 1, 0)) # filename, page_num, interval
+    
+    a4files.extend(a4single)
+    a4files.extend(a4double)
+    a4files.extend(a4multi)
+    a4filenames = []
+    a3filenames = []
+    for f in a4files:
+        a4filenames.append(f[0])
+    for f in a3files:
+        a3filenames.append(f[0])
+
+    # A4単一ページの2in1ページのintervalをカウント    
+    cnt = 0
+    timer = 0
+    for i, f in enumerate(a4single):
+        for n in range(f[1]): # page_num
+            cnt = cnt + 1 # page数
+            timer = timer + f[2]
+            if cnt % 2 == 0:
+                page_intervals.append(timer) # intervalをpage_num数分追加
+                timer = 0
+    # A4 2ページの2in1ページのintervalをカウント    
+    cnt = 0
+    timer = 0
+    for f in a4double:
+        for n in range(f[1]): # page_num
+            cnt = cnt + 1 # page数
+            timer = timer + f[2]
+            if cnt % 2 == 0:
+                page_intervals.append(timer) # intervalをpage_num数分追加
+                timer = 0
+    # A4 3ページ以上の2in1ページのintervalをカウント    
+    cnt = 0
+    timer = 0
+    for f in a4multi:
+        for n in range(f[1]): # page_num
+            cnt = cnt + 1 # page数
+            timer = timer + f[2]
+            if cnt % 2 == 0:
+                page_intervals.append(timer) # intervalをpage_num数分追加
+                timer = 0
+            elif cnt == f[1]: # 最終ページ
+                page_intervals.append(f[2]) # intervalをpage_num数分追加
+
+    # A3 ページのintervalをカウント    
+    cnt = 0
+    timer = 0
+    for f in a3files:
+        for n in range(f[1]): # page_num
+            cnt = cnt + 1 # page数
+            page_intervals.append(f[2]) # intervalをpage_num数分追加
+
+    # A4Singleを連結
+    is_a4create = pdfunite(a4filenames, TEMP_FOLDER+'/a4tmp.pdf')
     # A3を連結
-    is_a3create = pdfunite(a3files, TEMP_FOLDER+'/a3tmp.pdf')
+    is_a3create = pdfunite(a3filenames, TEMP_FOLDER+'/a3tmp.pdf')
     # A4を2in1に
     if is_a4create and is_a3create:
         a4nup_2in1(TEMP_FOLDER+'/a4tmp.pdf', TEMP_FOLDER+'/a4all.pdf')
-        pdfunite([TEMP_FOLDER+'/a4all.pdf', TEMP_FOLDER+'/a3tmp.pdf'], TEMP_FOLDER+'/final.pdf')
+        pdfunite([TEMP_FOLDER+'/a4all.pdf', TEMP_FOLDER+'/a3tmp.pdf'], output_pdf)
     elif is_a4create == True  and is_a3create == False:
-        a4nup_2in1(TEMP_FOLDER+'/a4tmp.pdf', TEMP_FOLDER+'/final.pdf')
+        a4nup_2in1(TEMP_FOLDER+'/a4tmp.pdf', output_pdf)
     elif is_a4create == False and is_a3create == True:
-        shutil.move(TEMP_FOLDER+'/a3tmp.pdf', TEMP_FOLDER+'/final.pdf')
+        shutil.move(TEMP_FOLDER+'/a3tmp.pdf', output_pdf)
 
 
     # 一時ファイルを削除
-    rm_tmpfiles(a4files) 
-    rm_tmpfiles(a3files)
+    rm_tmpfiles(a4filenames) 
+    rm_tmpfiles(a3filenames)
     rm_tmpfiles([TEMP_FOLDER+'/a4tmp.pdf',TEMP_FOLDER+'/a3tmp.pdf',TEMP_FOLDER+'/a4all.pdf'])
-    # jfbview
-    if os.path.exists(TEMP_FOLDER+'/final.pdf'):
-        print('Show final.pdf interval in %d'%(interval))
-        clear_screen()
-        run_jfbview(TEMP_FOLDER+'/final.pdf', interval)
-            
+
+    return page_intervals
+
+if __name__ == '__main__':
+    devnull = open('/dev/null', 'w')
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--basedir", type=str, help="PDF base directory")
+    parser.add_argument("--config", type=str, default='config.ini', help="Config file (default = basedir/config.ini")
+    args = parser.parse_args()
+    output_pdf = TEMP_FOLDER + '/final.pdf'
     
+    if args.basedir is None or not os.path.exists(args.basedir):
+        print(args.basedir if args.basedir is not None else "'None'" + ' is not found')
+        run_jfbview(BASE_FOLDER+'/default.pdf', [15])
+        exit(0)
+    
+    if not os.path.exists(args.basedir+'/'+args.config):
+        print(args.basedir+'/'+args.config + ' is not exist')
+        run_jfbview(BASE_FOLDER+'/default.pdf', [15])
+        exit(0)
+
+    # read config.ini
+    interval = read_configini(args.basedir+'/'+args.config)
+
+    if os.path.exists(output_pdf):
+        os.remove(output_pdf)
+    
+    # PDF作成
+    page_intervals = create_pdf(output_pdf)
+
+    # jfbviewのプロセスが生きていたら、KILLする
+    #ret = findProcessIdByName('jfbview')
+    #kill_jfbview(ret)
+    
+    # copy final
+    view_pdf = TEMP_FOLDER+'/view.pdf'
+    shutil.copy2(output_pdf, view_pdf)
+    
+    # jfbview
+    if os.path.exists(view_pdf):
+        print('Show view.pdf interval')
+        clear_screen()
+        run_jfbview(view_pdf, page_intervals)
+    else:
+        print('Show default PDF')
+        run_jfbview(BASE_FOLDER+'/default.pdf', [interval])
+
+    devnull.close()
