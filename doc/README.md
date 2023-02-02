@@ -115,3 +115,9 @@ fixes, and was named JFBPDF. The JFBPDF code (in C) grew steadily more
 convoluted as features were added, and finally was completely rewritten from
 scratch in November 2012, with added support for images through Imlib2.
 
+# For digital signage (PDF view)
+if [ $(tty) == '/dev/tty1' ]; then
+    echo 'Waiting for 10 sec...'
+    sleep 10
+    echo 'Execute PDF View'
+    python3 /home/pi/program/jfbview/show_pdf.py --config=config.ini --basedir=/mnt;
