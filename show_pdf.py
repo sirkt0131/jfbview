@@ -76,13 +76,15 @@ def run_jfbview(filename, intervals):
         #cmd = "/usr/local/bin/jfbview --show_progress -i %d %s"%(intervals[0], filename)
         cmd = ['/usr/local/bin/jfbview', '--show_progress', '-i', "%d"%(intervals[0]), "%s"%(filename)]
         ret = subprocess.Popen(cmd, shell=False, stdout=devnull, stderr=devnull) # subprocess.PIPE
-        return ret.communicate()
+        ret.communicate()
+        return ret.returncode
     elif len(intervals) > 1:
         ints = ",".join(map(str, intervals))
         #cmd = "/usr/local/bin/jfbview --show_progress -j %s %s"%(ints, filename)
         cmd = ['/usr/local/bin/jfbview', '--show_progress', '-j', "%s"%(ints), "%s"%(filename)]
         ret = subprocess.Popen(cmd, shell=False, stdout=devnull, stderr=devnull) # subprocess.PIPE
-        return ret.communicate()
+        ret.communicate()
+        return ret.returncode
 
 def findProcessIdByName(processName):
     '''
@@ -297,47 +299,55 @@ def create_pdf(output_pdf):
     return page_intervals
 
 if __name__ == '__main__':
-    devnull = open('/dev/null', 'w')
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--basedir", type=str, help="PDF base directory")
-    parser.add_argument("--config", type=str, default='config.ini', help="Config file (default = basedir/config.ini")
-    args = parser.parse_args()
-    output_pdf = TEMP_FOLDER + '/final.pdf'
-    
-    if args.basedir is None or not os.path.exists(args.basedir):
-        print(args.basedir if args.basedir is not None else "'None'" + ' is not found')
-        run_jfbview(BASE_FOLDER+'/default.pdf', [15])
-        exit(0)
-    
-    if not os.path.exists(args.basedir+'/'+args.config):
-        print(args.basedir+'/'+args.config + ' is not exist')
-        run_jfbview(BASE_FOLDER+'/default.pdf', [15])
-        exit(0)
 
-    # read config.ini
-    interval = read_configini(args.basedir+'/'+args.config)
+    while True:
+        devnull = open('/dev/null', 'w')
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--basedir", type=str, help="PDF base directory")
+        parser.add_argument("--config", type=str, default='config.ini', help="Config file (default = basedir/config.ini")
+        args = parser.parse_args()
+        output_pdf = TEMP_FOLDER + '/final.pdf'
+        
+        if args.basedir is None or not os.path.exists(args.basedir):
+            print(args.basedir if args.basedir is not None else "'None'" + ' is not found')
+            run_jfbview(BASE_FOLDER+'/default.pdf', [15])
+            exit(0)
+        
+        if not os.path.exists(args.basedir+'/'+args.config):
+            print(args.basedir+'/'+args.config + ' is not exist')
+            run_jfbview(BASE_FOLDER+'/default.pdf', [15])
+            exit(0)
 
-    if os.path.exists(output_pdf):
-        os.remove(output_pdf)
-    
-    # PDF作成
-    page_intervals = create_pdf(output_pdf)
+        # read config.ini
+        interval = read_configini(args.basedir+'/'+args.config)
 
-    # jfbviewのプロセスが生きていたら、KILLする
-    #ret = findProcessIdByName('jfbview')
-    #kill_jfbview(ret)
-    
-    # copy final
-    view_pdf = TEMP_FOLDER+'/view.pdf'
-    shutil.copy2(output_pdf, view_pdf)
-    
-    # jfbview
-    if os.path.exists(view_pdf):
-        print('Show view.pdf interval')
-        clear_screen()
-        run_jfbview(view_pdf, page_intervals)
-    else:
-        print('Show default PDF')
-        run_jfbview(BASE_FOLDER+'/default.pdf', [interval])
+        if os.path.exists(output_pdf):
+            os.remove(output_pdf)
+        
+        # PDF作成
+        page_intervals = create_pdf(output_pdf)
 
-    devnull.close()
+        # jfbviewのプロセスが生きていたら、KILLする
+        #ret = findProcessIdByName('jfbview')
+        #kill_jfbview(ret)
+        
+        # copy final
+        view_pdf = TEMP_FOLDER+'/view.pdf'
+        shutil.copy2(output_pdf, view_pdf)
+        
+        # jfbview
+        ret = -1
+        if os.path.exists(view_pdf):
+            print('Show view.pdf interval')
+            clear_screen()
+            ret = run_jfbview(view_pdf, page_intervals)
+            print(ret)
+        else:
+            print('Show default PDF')
+            ret = run_jfbview(BASE_FOLDER+'/default.pdf', [interval])
+
+        devnull.close()
+        if ret == 0:
+            break
+
+
