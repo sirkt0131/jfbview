@@ -17,6 +17,12 @@ def get_pdf_size(file):
     ret = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE) # 
     stdout, stderr = ret.communicate()
     return stdout.decode('utf-8')
+
+def get_pdf_rot(file):
+    cmd = "pdfinfo  %s | grep 'Page rot:' | awk -F' ' '{print $3}'"%(file)
+    ret = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE) # 
+    stdout, stderr = ret.communicate()
+    return stdout.decode('utf-8')
    
 def get_pdf_pages(file):
     cmd = "pdfinfo  %s | grep 'Pages:' | awk -F' ' '{print $2}'"%(file)
@@ -196,11 +202,14 @@ def create_pdf(output_pdf):
     # 縦長はA4に、横長はA3にリサイズ
     for i, file in enumerate(files):
         size = get_pdf_size(file).split()
+        rot  = get_pdf_rot(file)
         num  = get_pdf_pages(file)
         # w,hが取得できる場合
         if len(size)>=2:
             w = float(size[0])/72*25.4 # [mm]
             h = float(size[1])/72*25.4 # [mm]
+            if rot == '90' or rot == '270':
+                w, h = h, w
             output = "%s/%02d.pdf"%(TEMP_FOLDER, i)
             if (w < h):
                 pdf_resize_a4(file, output)
