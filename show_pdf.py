@@ -202,7 +202,7 @@ def create_pdf(output_pdf):
     # 縦長はA4に、横長はA3にリサイズ
     for i, file in enumerate(files):
         size = get_pdf_size(file).split()
-        rot  = get_pdf_rot(file)
+        rot  = get_pdf_rot(file).strip() # 改行を削除
         num  = get_pdf_pages(file)
         # w,hが取得できる場合
         if len(size)>=2:
