@@ -507,6 +507,132 @@ class ToggleSepiaColorModeCommand : public Command {
  *                               END COMMANDS                                *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                                 GPIO                                      *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+enum class GPIO_STATUS   { OFF   ,  ON      };
+enum class GPIO_MODE     { PULLUP,  PULLDOWN};
+enum class GPIO_DIRECTION{ INPUT ,  OUTPUT  };
+
+class GPIO {
+private:
+  const int GPIO_WAITTIMER = 100; // [ms]
+public:
+  GPIO(const std::vector<std::tuple<int, GPIO_DIRECTION, GPIO_MODE> >& bcws)
+  :bcws_(bcws)
+  {
+    for(const auto& i:bcws)
+    {
+      int bcw = std::get<0>(i);
+      // Use
+      use_gpio_port(bcw);
+      // Direction
+      GPIO_DIRECTION direction = std::get<1>(i);
+      set_direction(bcw, direction);
+      // Mode
+      GPIO_MODE mode = std::get<2>(i);
+      set_mode(bcw, mode);
+    }
+  }
+  ~GPIO()
+  {
+    for(const auto& i:bcws_)
+    {
+      int bcw = std::get<0>(i);
+      // Unuse
+      unuse_gpio_port(bcw);
+    }
+  }
+
+  std::vector<std::tuple<int, GPIO_STATUS>> get_buttons() const
+  {
+    std::vector<std::tuple<int, GPIO_STATUS>> result;
+    for(const auto& i:bcws_)
+    {
+      int bcw = std::get<0>(i);
+      GPIO_STATUS status = get_value(bcw);
+      result.push_back(std::make_tuple(bcw, status));
+    }  
+    return result;
+  }
+private:
+  void use_gpio_port(int bcw) const
+  {
+    //std::printf("use %d\n",bcw);
+    FILE* fd = fopen("/sys/class/gpio/export", "w");
+    if (fd == NULL) { 
+      printf("cannot open gpio %d\n", bcw);
+      return;
+      //exit(EXIT_FAILURE);
+    }
+    std::string s_bcw = std::to_string(bcw);
+    fprintf(fd, s_bcw.c_str());
+    fclose(fd);
+    usleep(GPIO_WAITTIMER*1000);
+  }
+
+  void unuse_gpio_port(int bcw) const
+  {
+    //std::printf("unuse %d\n",bcw);
+    FILE* fd = fopen("/sys/class/gpio/unexport", "w");
+    if (fd == NULL) { 
+      printf("cannot open gpio %d\n", bcw);
+      return;
+      //exit(EXIT_FAILURE);
+    }
+    std::string s_bcw = std::to_string(bcw);
+    fprintf(fd, s_bcw.c_str());
+    fclose(fd);
+    usleep(GPIO_WAITTIMER*1000);
+  }
+
+  void set_direction(int bcw, GPIO_DIRECTION direction) const
+  {
+    //std::printf("set_direction %d %s\n",bcw, (direction == GPIO_DIRECTION::OUTPUT ? "out" : "in"));
+    char gpio_direction[128] = {};
+    sprintf(gpio_direction, "/sys/class/gpio/gpio%d/direction", bcw);
+    FILE* fp = fopen(gpio_direction, "w");
+    if (fp == NULL) {
+        printf("cannot open gpio direction %s\n",gpio_direction);
+        return;
+        //exit(EXIT_FAILURE);
+    }
+    fprintf(fp, (direction == GPIO_DIRECTION::OUTPUT ? "out" : "in"));
+    fclose(fp);
+    usleep(GPIO_WAITTIMER*1000);
+  }
+
+  void set_mode(int bcw, GPIO_MODE mode) const
+  {
+    char gpio_mode[128] = {};
+    sprintf(gpio_mode,"raspi-gpio set %d %s", bcw, (mode == GPIO_MODE::PULLUP ? "pu" : "pd"));
+    system(gpio_mode);
+    usleep(GPIO_WAITTIMER*1000);
+    return;
+  }
+
+  GPIO_STATUS get_value(int bcw) const
+  {
+    char gpio_value[128] = {};
+    sprintf(gpio_value, "/sys/class/gpio/gpio%d/value", bcw);
+    FILE* fp = fopen(gpio_value, "r");
+    if (fp == NULL) {
+        printf("cannot open gpio value %s\n",gpio_value);
+        exit(EXIT_FAILURE);
+    }
+    char state;
+    fread(&state, sizeof(char), 1, fp);
+    fclose(fp);
+    return (state == '1') ? GPIO_STATUS::OFF : GPIO_STATUS::ON;
+  }
+private:
+  std::vector<std::tuple<int, GPIO_DIRECTION, GPIO_MODE> > bcws_;
+};
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                                END GPIO                                   *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
 // Help text printed by --help or -h.
 static const char* HELP_STRING =
     "\n" JFBVIEW_PROGRAM_NAME " " JFBVIEW_VERSION
@@ -532,6 +658,7 @@ static const char* HELP_STRING =
     "\t--interval=N, -i N    Set auto interval time in seconds \n"
     "\t--intervals=N, -j N,. Set auto intervals time in seconds \n"
     "\t--show_progress       Show progress circle \n"
+    "\t--use_button          Use GPIO button \n"
 #if defined(JFBVIEW_ENABLE_LEGACY_IMAGE_IMPL) && \
     defined(JFBVIEW_ENABLE_LEGACY_PDF_IMPL) && !defined(JFBVIEW_NO_IMLIB2)
     "\t--format=image, -f image\n"
@@ -601,12 +728,13 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
       {"interval", true, nullptr, 'i'},
       {"intervals", true, nullptr, 'j'},
       {"show_progress", false, nullptr, 's'},
+      {"use_button", false, nullptr, 'b'},
       {"format", true, nullptr, 'f'},
       {"cache_size", true, nullptr, RENDER_CACHE_SIZE},
       {"fb_debug_info", false, nullptr, PRINT_FB_DEBUG_INFO_AND_EXIT},
       {0, 0, 0, 0},
   };
-  static const char* ShortFlags = "hP:p:z:r:c:i:j:s:f:";
+  static const char* ShortFlags = "hP:p:z:r:c:i:j:s:b:f:";
 
   for (;;) {
     int opt_char = getopt_long(argc, argv, ShortFlags, LongFlags, nullptr);
@@ -692,9 +820,6 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
       case 'j':
         {
           std::vector<int> intervals = split_intervals(optarg, ",");
-          int last = intervals.back();
-          intervals.pop_back();
-          intervals.insert(intervals.begin(), last);
           state->Intervals = intervals;
           //for_each(intervals.begin(), intervals.end(), [](int v){printf("%d\n",v);});
           state->Zoom = Viewer::ZOOM_TO_FIT;
@@ -702,6 +827,9 @@ static void ParseCommandLine(int argc, char* argv[], State* state) {
         break;
       case 's':
         state->ShowProgress = true;
+        break;
+      case 'b':
+        state->UseButton = true;
         break;
       case PRINT_FB_DEBUG_INFO_AND_EXIT:
         state->PrintFBDebugInfoAndExit = true;
@@ -909,7 +1037,49 @@ void line_to(Framebuffer* fb, int x0, int y0, int x1, int y1, uint8_t r, uint8_t
   }
 }
 
-int wait_timer(float sec, Framebuffer* fb)
+int buttonHit(GPIO* gpio)
+{
+  if (gpio) {
+    std::vector<std::tuple<int, GPIO_STATUS>> result = gpio->get_buttons();
+    if (result.size() == 3) {
+      int bcw1            = std::get<0>(result[0]);
+      GPIO_STATUS status1 = std::get<1>(result[0]);
+      int bcw2            = std::get<0>(result[1]);
+      GPIO_STATUS status2 = std::get<1>(result[1]);
+      int bcw3            = std::get<0>(result[2]);
+      GPIO_STATUS status3 = std::get<1>(result[2]);
+
+      GPIO_STATUS status16 = (bcw1 == 16) ? status1 : ((bcw2 == 16) ? status2 :((bcw3 == 16) ? status3 : GPIO_STATUS::OFF));
+      GPIO_STATUS status20 = (bcw1 == 20) ? status1 : ((bcw2 == 20) ? status2 :((bcw3 == 20) ? status3 : GPIO_STATUS::OFF));
+      GPIO_STATUS status21 = (bcw1 == 21) ? status1 : ((bcw2 == 21) ? status2 :((bcw3 == 21) ? status3 : GPIO_STATUS::OFF));
+
+      // 16(Forward)のみON
+      if ( (status16 == GPIO_STATUS::ON ) &&
+           (status20 == GPIO_STATUS::OFF) && 
+           (status21 == GPIO_STATUS::OFF) )
+      {
+        usleep(100*1000);
+        return 'J';
+      }else if // 20(Stop)のみON
+          ((status16 == GPIO_STATUS::OFF) &&
+           (status20 == GPIO_STATUS::ON ) && 
+           (status21 == GPIO_STATUS::OFF) )
+      {
+        return 'P';
+      }else if // 21(Backward)のみON
+          ((status16 == GPIO_STATUS::OFF ) &&
+           (status20 == GPIO_STATUS::OFF) && 
+           (status21 == GPIO_STATUS::ON ) )
+      {
+        usleep(100*1000);
+        return 'K';
+      }
+    }
+  }
+  return 0;
+}
+
+int wait_timer(float sec, Framebuffer* fb, GPIO* gpio)
 {
   const double PI = 3.141592653589;
   int msec = int(sec * 1000);
@@ -933,8 +1103,39 @@ int wait_timer(float sec, Framebuffer* fb)
       line_to(fb, center_x, center_y, x, y, 250, 0, 0);
     }
     usleep(1000*10); // 10[ms]
+    // Watch button hit
+    int c = buttonHit(gpio);
+    while (c == 'P') {
+      c = buttonHit(gpio);
+    }
+    if (c == 'K' || c == 'J') {
+      return c;
+    }
   }
-  return 0;
+  return 'J';
+}
+
+std::unique_ptr<GPIO> setup_gpio()
+{
+  std::tuple<int, GPIO_DIRECTION, GPIO_MODE> gpio16(16, GPIO_DIRECTION::INPUT, GPIO_MODE::PULLUP);
+  std::tuple<int, GPIO_DIRECTION, GPIO_MODE> gpio20(20, GPIO_DIRECTION::INPUT, GPIO_MODE::PULLUP);
+  std::tuple<int, GPIO_DIRECTION, GPIO_MODE> gpio21(21, GPIO_DIRECTION::INPUT, GPIO_MODE::PULLUP);
+  std::vector<std::tuple<int, GPIO_DIRECTION, GPIO_MODE>>  bcws = {gpio16, gpio20, gpio21};
+  
+  return std::make_unique<GPIO>(bcws);
+}
+
+int get_current_interval(const State& state)
+{
+  if (state.Interval != 0)
+  {
+    return state.Interval;
+  }
+  else if(state.Intervals.size() >= state.NumPages)
+  {
+    return state.Intervals[state.Page];
+  }
+  return 10;
 }
 
 int main(int argc, char* argv[]) {
@@ -958,6 +1159,12 @@ int main(int argc, char* argv[]) {
   // 1. Initialization.
   ParseCommandLine(argc, argv, &state);
   
+  // Setup GPIO
+  std::unique_ptr<GPIO> gpio;
+  if (state.UseButton == true) {
+    gpio = setup_gpio();
+  }
+
   // restore
   if (prev_state.Exit) {
     state.Exit = false;
@@ -1031,11 +1238,24 @@ int main(int argc, char* argv[]) {
       state.ViewerInst->GetState(&state);
     }
     state.Render = true;
-    int c = state.Page+1 == state.NumPages ? 'g' : 'J';
+
+    // 2.2. Grab input.
+    int c;
+    while (isdigit(c = getch())) {
+      if (repeat == Command::NO_REPEAT) {
+        repeat = c - '0';
+      } else {
+        repeat = repeat * 10 + c - '0';
+      }
+    }
+    if (c == KEY_RESIZE) {
+      continue;
+    }
+
+    // 2.3. Run command.
     registry->Dispatch(c, repeat, &state);
     repeat = Command::NO_REPEAT;
-    usleep(state.Interval*1000*1000);
-  } while(!state.Exit);
+  } while (!state.Exit);
 #else  
   do {
     // 2.1 Render.
@@ -1045,7 +1265,7 @@ int main(int argc, char* argv[]) {
       state.ViewerInst->GetState(&state);
     }
     state.Render = true;
-    
+
     // Check PDF numpages and intervals count
     if (state.Intervals.size() != 0 and state.Intervals.size() < state.NumPages) {
       printf("PDF page count and intervals are mismatch!  Pages %d, Intervals %d\n", state.NumPages, int(state.Intervals.size()));
@@ -1072,31 +1292,26 @@ int main(int argc, char* argv[]) {
       registry->Dispatch(c, repeat, &state);
     }
     else {
-      if (state.Interval != 0) {
-        int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
-        registry->Dispatch(c, repeat, &state);
-        int wait_result = wait_timer(state.Interval, state.ShowProgress ? state.FramebufferInst.get(): nullptr);
-        if (wait_result == 'q' || wait_result == 'r') {
-          state.Exit = true;
+      int c = 0;
+      // 2.2 Grab input.
+      int wait_result = wait_timer(get_current_interval(state), state.ShowProgress ? state.FramebufferInst.get(): nullptr, gpio.get());
+      if (wait_result == 'q' || wait_result == 'r') {
+        state.Exit = true;
           if (wait_result == 'q') {e_flag = 0;}
           else                    {e_flag = 1;}
-        }
       }
-      else if(state.Intervals.size() >= state.NumPages){
-        int c = (state.Page+1 == state.NumPages ? 'g' : 'J');
-        registry->Dispatch(c, repeat, &state);
-        int wait_result = wait_timer(state.Intervals[state.Page], state.ShowProgress ? state.FramebufferInst.get(): nullptr);
-        if (wait_result == 'q' || wait_result == 'r') {
-          state.Exit = true;
-          if (wait_result == 'q') {e_flag = 0;}
-          else                    {e_flag = 1;}
-        }
+      else if (wait_result == 'J' || wait_result == 'K') {
+        if (state.Page+1 == state.NumPages && wait_result == 'J') wait_result = 'g';
+        if (state.Page+1 == 1              && wait_result == 'K') wait_result = 'G';
+        c = wait_result;
       }
+      // 2.3. Run command.
+      registry->Dispatch(c, repeat, &state);
     }
     repeat = Command::NO_REPEAT;
   } while (!state.Exit);
 #endif
-
+  
   // 3. Clean up.
   state.OutlineViewInst.reset();
   // Hack alert: Calling endwin() immediately after the framebuffer destructor

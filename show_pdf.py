@@ -80,14 +80,15 @@ def rm_tmpfiles(files):
 def run_jfbview(filename, intervals):
     if len(intervals) == 1:
         #cmd = "/usr/local/bin/jfbview --show_progress -i %d %s"%(intervals[0], filename)
-        cmd = ['/usr/local/bin/jfbview', '--show_progress', '-i', "%d"%(intervals[0]), "%s"%(filename)]
+        cmd = ['/usr/local/bin/jfbview', '--use_button', '--show_progress', '-i', "%d"%(intervals[0]), "%s"%(filename)]
         ret = subprocess.Popen(cmd, shell=False, stdout=devnull, stderr=devnull) # subprocess.PIPE
         ret.communicate()
         return ret.returncode
     elif len(intervals) > 1:
         ints = ",".join(map(str, intervals))
         #cmd = "/usr/local/bin/jfbview --show_progress -j %s %s"%(ints, filename)
-        cmd = ['/usr/local/bin/jfbview', '--show_progress', '-j', "%s"%(ints), "%s"%(filename)]
+        cmd = ['/usr/local/bin/jfbview', '--use_button', '--show_progress', '-j', "%s"%(ints), "%s"%(filename)]
+        print(cmd)
         ret = subprocess.Popen(cmd, shell=False, stdout=devnull, stderr=devnull) # subprocess.PIPE
         ret.communicate()
         return ret.returncode

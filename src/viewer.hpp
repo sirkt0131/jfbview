@@ -93,6 +93,8 @@ class Viewer {
     std::vector<int> Intervals;
     // ShowProgress
     bool ShowProgress;
+    // Use Button
+    bool UseButton;
     // Current color mode.
     enum ColorMode ColorMode;
 
@@ -106,7 +108,8 @@ class Viewer {
           YOffset(y_offset),
           ColorMode(NORMAL),
           Interval(0),
-          ShowProgress(false) {}
+          ShowProgress(false),
+          UseButton(false) {}
   };
 
   // Constructs a new Viewer object. Does not take ownership of the document or
