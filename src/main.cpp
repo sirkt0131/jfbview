@@ -1095,7 +1095,7 @@ int buttonHit(GPIO* gpio)
            (status20 == GPIO_STATUS::OFF) && 
            (status21 == GPIO_STATUS::OFF) )
       {
-        usleep(200*1000);
+        usleep(500*1000);
         return 'J';
       }else if // 20(Stop)のみON
           ((status16 == GPIO_STATUS::OFF) &&
@@ -1109,7 +1109,7 @@ int buttonHit(GPIO* gpio)
            (status20 == GPIO_STATUS::OFF) && 
            (status21 == GPIO_STATUS::ON ) )
       {
-        usleep(200*1000);
+        usleep(500*1000);
         return 'K';
       }
     }
